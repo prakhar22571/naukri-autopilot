@@ -1,0 +1,87 @@
+{
+  "name": "naukri-autopilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Your local Naukri profile and job application assistant",
+  "author": "Naukri Autopilot",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:desktop": "npm run build && playwright test",
+    "test:packaged": "playwright test --config playwright.packaged.config.ts",
+    "dist": "npm run build && electron-builder --win nsis",
+    "postinstall": "node node_modules/electron/install.js"
+  },
+  "build": {
+    "npmRebuild": false,
+    "appId": "local.naukri.autopilot",
+    "productName": "Naukri Autopilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "assets",
+        "filter": [
+          "*.png",
+          "*.ico"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/playwright-core/**/*",
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "lucide-react": "1.47.0",
+    "luxon": "3.7.2",
+    "playwright-core": "1.63.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/luxon": "3.7.5",
+    "@types/node": "26.6.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.4.2",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.11"
+  }
+}
