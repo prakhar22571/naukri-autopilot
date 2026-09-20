@@ -161,10 +161,10 @@ function registerIPC(): void {
       previous = store.settings()
     if (settings.active) {
       if (!controller.snapshot().connected)
-        throw new Error('Connect your Naukri account before starting autopilot.')
+        throw new Error('Connect your Naukri account or check the saved connection before starting autopilot. ' + controller.snapshot().connectionMessage)
       if (
         (settings.profileSchedule.enabled || settings.applicationSchedule.enabled) &&
-        !store.resume()
+        (!store.resume() || !existsSync(store.resume()!.path))
       )
         throw new Error('Choose a resume in Profile first.')
     }
@@ -227,7 +227,7 @@ function registerIPC(): void {
     return resume
   })
   handle('start', (workflow: unknown) =>
-    controller.start(z.enum(['profile', 'applications', 'preview', 'connect']).parse(workflow)),
+    controller.start(z.enum(['profile', 'applications', 'preview', 'connect', 'verify']).parse(workflow)),
   )
   handle('stop', () => controller.stop())
   handle('disconnect', () => controller.disconnect())

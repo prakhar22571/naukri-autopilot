@@ -28,6 +28,12 @@ Build a Windows installer with `npm run dist`. Output appears in `release/`. The
 4. Use **Find matching jobs** to preview your filters. A preview does not upload your resume, change your headline, or submit applications. It can reconcile existing uncertain applications by reading their status.
 5. Set schedules and choose **Start autopilot**. Defaults: profile refresh at 09:00 every day, applications at 09:15 on weekdays, Asia/Kolkata, and 10 application submissions per day.
 
+**Start autopilot enables future schedules; it does not start a run immediately.** The dashboard shows the next run times in your configured timezone. Use **Refresh profile**, **Find matching jobs**, or **Jobs → Apply now** for an immediate run. At least one schedule must be enabled. Pause remains available while you have unsaved preferences.
+
+Use **Profile → Check connection** to verify a saved login in visible Chrome without uploading a resume or submitting applications. A saved session is labeled as unchecked until verified. If Naukri shows a security check, this action leaves Chrome open for up to two minutes for you to resolve it manually; Stop cancels the check.
+
+An **Access blocked** message is different from an expired login. The app keeps your encrypted session, pauses scheduling, and turns off background browsing after a block. Visible Chrome is the default for new installations. Check the connection before restarting autopilot; a successful check does not automatically resume schedules. If Naukri still denies access, try later. A page-layout failure also retains the saved login and reports the actual failed operation.
+
 Closing the dashboard keeps the app in the Windows tray. **Quit** ends scheduling; **Pause** disables automatic runs and stops further browser actions. Runs require an awake computer, network access, and a running app. Launch-at-login is available in the installed app. After sleep or downtime, each enabled workflow catches up once rather than replaying a backlog.
 
 ## How matching and applications work
@@ -39,7 +45,7 @@ Closing the dashboard keeps the app in the Windows tray. **Quit** ends schedulin
 - Applications run one at a time. A durable record reserves a slot before the first Apply click. Manual and scheduled runs share the same daily quota and browser lock.
 - Unknown screening questions and employer-site redirects are queued for attention. Save an answer from the Jobs view to retry that question on a future run. Answers are reused only for the same question meaning, input type, and complete option set. Candidate facts are used only for explicit, unit-qualified questions.
 - A timeout or crash after clicking Apply produces **Outcome unknown**. The slot remains counted on the submission day. Later runs check Naukri for confirmation before retrying anything; unresolved outcomes never automatically resubmit. If Naukri cannot confirm it, inspect the job manually. V1 deliberately offers no forced retry for an uncertain submission.
-- CAPTCHA, expired sessions, and unexpected page structure pause autopilot. Use **Reconnect** for a visible login/challenge flow. If a site-layout change persists, the adapter needs updating; reconnecting cannot fix incompatible selectors.
+- CAPTCHA, expired sessions, and unexpected page structure pause autopilot. Use **Check connection** for blocked access and **Reconnect** for an expired login. If a site-layout change persists, the adapter needs updating; reconnecting cannot fix incompatible selectors.
 
 ## Local data and privacy
 

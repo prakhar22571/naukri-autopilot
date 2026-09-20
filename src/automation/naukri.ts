@@ -26,6 +26,7 @@ import { normalize } from '../core/matching'
 import { basename } from 'node:path'
 
 export class AttentionError extends Error {}
+export class ChallengeError extends AttentionError {}
 export class StructureError extends Error {}
 export class SubmissionNotStartedError extends StructureError {}
 export class StoppedError extends Error {}
@@ -65,6 +66,15 @@ export class NaukriAdapter {
       viewport: { width: 1440, height: 1000 },
       acceptDownloads: false,
     })
+    if (auth?.sessionStorage)
+      await this.context.addInitScript((saved) => {
+        // Restore once per tab/origin; subsequent navigation must retain refreshed values.
+        if (sessionStorage.getItem('__autopilot_restored')) return
+        const entries = saved[location.origin]
+        if (!entries) return
+        for (const [key, value] of Object.entries(entries)) sessionStorage.setItem(key, value)
+        sessionStorage.setItem('__autopilot_restored', '1')
+      }, auth.sessionStorage)
     this.context.setDefaultTimeout(12_000)
     this.context.setDefaultNavigationTimeout(30_000)
     await this.context.route('**/*', async (route) => {
@@ -114,8 +124,8 @@ export class NaukriAdapter {
       ) ||
       (await this.visible(this.page.locator('iframe[src*="captcha"]')))
     )
-      throw new AttentionError(
-        'Naukri needs your attention. Reconnect in the visible browser to resolve the challenge.',
+      throw new ChallengeError(
+        'Naukri blocked this browser or requires a security check. Your saved login has not been removed. Check the connection in visible Chrome; if access is still denied, try again later.',
       )
     if (/\/nlogin|\/login(?:[/?#]|$)/i.test(this.page.url()))
       throw new AttentionError('Your Naukri session expired. Reconnect to continue.')
@@ -133,8 +143,8 @@ export class NaukriAdapter {
         (await this.visible(this.page.getByText('Resume headline', { exact: true }))))
     )
   }
-  async login(): Promise<AuthState> {
-    await this.navigate('https://www.naukri.com/nlogin/login')
+  async login(hasSavedSession = false): Promise<AuthState> {
+    await this.navigate(hasSavedSession ? PROFILE : 'https://www.naukri.com/nlogin/login')
     this.progress('Log in to Naukri in Chrome. Your password stays in the browser.')
     const deadline = Date.now() + 10 * 60_000
     while (Date.now() < deadline) {
@@ -153,32 +163,52 @@ export class NaukriAdapter {
     }
     throw new AttentionError('Login timed out. Reconnect when you are ready.')
   }
-  async verifySession(): Promise<void> {
+  async verifySession(allowManualChallenge = false): Promise<void> {
     await this.navigate(PROFILE)
-    await this.page!.locator('body').waitFor()
-    await this.page!.getByText('Resume headline', { exact: true })
-      .first()
-      .waitFor({ timeout: 20_000 })
-      .catch(() => undefined)
+    let deadline = Date.now() + 20_000
+    let waitingForChallenge = false
+    while (Date.now() < deadline) {
+      this.checkStop()
+      try {
+        await this.assertReady()
+      } catch (error) {
+        if (!(error instanceof ChallengeError) || !allowManualChallenge) throw error
+        if (!waitingForChallenge) {
+          waitingForChallenge = true
+          deadline = Date.now() + 2 * 60_000
+          this.progress('Naukri requires attention in Chrome. Complete any visible security check yourself. If access is denied, close Chrome or press Stop and try later. Waiting up to two minutes.')
+        }
+        await this.page!.waitForTimeout(500)
+        continue
+      }
+      // A navigation link or hamburger alone does not prove the profile loaded.
+      if (this.page!.url().includes('/mnjuser/profile') &&
+        await this.visible(this.page!.getByText('Resume headline', { exact: true }))) break
+      await this.page!.waitForTimeout(250)
+    }
     await this.assertReady()
-    if (!(await this.isSignedIn()))
-      throw new AttentionError('Could not verify your Naukri session. Reconnect to continue.')
+    if (!(await this.visible(this.page!.getByText('Resume headline', { exact: true }))))
+      throw new StructureError('The profile did not finish loading or its layout changed. Your saved login is retained. Check the connection before trying again.')
     this.protectNavigation = true
   }
   async state(): Promise<AuthState> {
-    return this.context!.storageState({ indexedDB: true })
+    const state: AuthState = await this.context!.storageState({ indexedDB: true })
+    state.sessionStorage = {}
+    for (const page of this.context!.pages()) {
+      if (page.isClosed() || !isNaukriUrl(page.url())) continue
+      const entries = await page.evaluate(() => ({
+        origin: location.origin,
+        entries: Object.fromEntries(Object.entries(sessionStorage).filter(([key]) => key !== '__autopilot_restored')),
+      }))
+      state.sessionStorage[entries.origin] = entries.entries
+    }
+    return state
   }
   async uploadResume(path: string): Promise<StepResult> {
     this.checkStop()
     await this.navigate(PROFILE)
-    await this.assertReady()
-    const input = this.page!.locator(
-      'input[type="file"][id*="attach"], input[type="file"][accept*="pdf"], input[type="file"][name*="resume"], input#attachCV',
-    ).first()
-    if (!(await input.count()))
-      throw new StructureError(
-        'Could not locate the resume upload control. No upload was attempted.',
-      )
+    const input = await this.resumeUploadControl()
+    this.checkStop()
     await input.setInputFiles(path)
     const feedback = this.page!.getByText(
       /resume (?:has been )?(?:uploaded|updated) successfully|successfully (?:uploaded|updated)/i,
@@ -196,6 +226,7 @@ export class NaukriAdapter {
     await this.navigate(PROFILE)
     await this.assertReady()
     const filename = this.page!.getByText(basename(path), { exact: false }).first()
+    await filename.waitFor({ state: 'visible', timeout: 15_000 }).catch(() => undefined)
     if (!(await this.visible(filename)))
       return {
         name: 'Resume upload',
@@ -207,6 +238,27 @@ export class NaukriAdapter {
       status: 'succeeded',
       message: `${basename(path)} uploaded and verified.`,
     }
+  }
+  async resumeUploadControl(): Promise<Locator> {
+    // The profile-photo input loads first. Wait specifically for the resume
+    // uploader, which can also remain disabled while the profile is hydrating.
+    const input = this.page!.locator(
+      'input[type="file"]#attachCV, input[type="file"][id*="resume" i], input[type="file"][name*="resume" i], input[type="file"][accept*="pdf" i]',
+    )
+    const deadline = Date.now() + 20_000
+    this.progress('Waiting for the resume upload control to finish loading…')
+    while (Date.now() < deadline) {
+      this.checkStop()
+      await this.assertReady()
+      const count = await input.count()
+      if (count > 1)
+        throw new StructureError('More than one resume upload control was found. No upload was attempted.')
+      if (count === 1 && await input.isEnabled()) return input
+      await this.page!.waitForTimeout(250)
+    }
+    this.checkStop()
+    await this.assertReady()
+    throw new StructureError('The resume upload control did not become ready within 20 seconds. No upload was attempted. Try again after the profile finishes loading.')
   }
   async rotateHeadline(
     headlines: string[],

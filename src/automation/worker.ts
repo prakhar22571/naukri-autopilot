@@ -1,6 +1,7 @@
 import {
   NaukriAdapter,
   AttentionError,
+  ChallengeError,
   StructureError,
   StoppedError,
   SubmissionNotStartedError,
@@ -61,10 +62,10 @@ async function run(input: WorkerInput): Promise<void> {
   try {
     await adapter.open(
       input.auth,
-      input.workflow === 'connect' ? false : input.settings.backgroundBrowser,
+      ['connect', 'verify'].includes(input.workflow) ? false : input.settings.backgroundBrowser,
     )
     if (input.workflow === 'connect') {
-      const state = await adapter.login()
+      const state = await adapter.login(!!input.auth)
       await rpc({ method: 'saveSession', state })
       authenticated = true
       send({
@@ -74,10 +75,12 @@ async function run(input: WorkerInput): Promise<void> {
       })
       message = 'Connected to Naukri.'
     } else {
-      await adapter.verifySession()
+      await adapter.verifySession(input.workflow === 'verify')
       authenticated = true
       send({ type: 'connection', connected: true, message: 'Naukri session verified.' })
-      if (input.workflow === 'profile') {
+      if (input.workflow === 'verify') {
+        message = 'Connection verified in visible Chrome. No profile changes or applications were made.'
+      } else if (input.workflow === 'profile') {
         send({ type: 'progress', message: 'Uploading your selected resume…' })
         steps.push(await adapter.uploadResume(input.resume!.path))
         if (input.settings.rotateHeadlines) {
@@ -239,17 +242,22 @@ async function run(input: WorkerInput): Promise<void> {
     if (error instanceof StoppedError) {
       status = 'stopped'
       message = error.message
+    } else if (error instanceof ChallengeError) {
+      status = 'attention'
+      message = error.message
+      send({ type: 'connection', connected: false, status: 'blocked', message })
     } else if (error instanceof AttentionError) {
       status = 'attention'
       message = error.message
-      send({ type: 'connection', connected: false, message })
+      send({ type: 'connection', connected: false, status: 'expired', message })
     } else if (error instanceof StructureError) {
       status = 'attention'
       message = error.message
       send({
         type: 'connection',
         connected: false,
-        message: 'Naukri’s page could not be verified. Review the run before reconnecting.',
+        status: 'attention',
+        message: error.message,
       })
     } else {
       status = 'failed'
@@ -277,7 +285,7 @@ async function run(input: WorkerInput): Promise<void> {
         message += ' The refreshed session could not be saved; reconnect before the next run.'
       }
     }
-    await adapter.close()
+    await adapter.close().catch(() => undefined)
     send({
       type: 'done',
       status,
