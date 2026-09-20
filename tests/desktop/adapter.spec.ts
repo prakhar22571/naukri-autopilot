@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { NaukriAdapter, AttentionError } from '../../src/automation/naukri'
+import { NaukriAdapter, AttentionError, ChallengeError, StoppedError } from '../../src/automation/naukri'
 import { defaultSettings } from '../../src/shared/settings'
 import { makeJob } from '../fixtures/data'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -104,6 +104,99 @@ test('login screens are not captured and expired sessions stop operations', asyn
     await adapter.page!.setContent('<input type="password"><p>Log in</p>')
     await expect(adapter.assertReady()).rejects.toBeInstanceOf(AttentionError)
     expect(await adapter.screenshot('test-results/should-not-exist.png')).toBeNull()
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('access denied is classified as blocked access, not an expired login', async () => {
+  const adapter = await fixture('immediate')
+  try {
+    await adapter.context!.route('**/mnjuser/profile', (route) => route.fulfill({
+      contentType: 'text/html', body: '<h1>Access Denied</h1><p>You do not have permission to access this server.</p>',
+    }))
+    await expect(adapter.verifySession()).rejects.toBeInstanceOf(ChallengeError)
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('a visible connection check waits for a manual challenge to clear', async () => {
+  const adapter = await fixture('immediate')
+  try {
+    await adapter.context!.route('**/mnjuser/profile', (route) => route.fulfill({
+      contentType: 'text/html', body: '<h1>Verify you are human</h1><script>setTimeout(()=>document.body.innerHTML="<h2>Resume headline</h2>",600)</script>',
+    }))
+    await adapter.verifySession(true)
+    expect(await adapter.isSignedIn()).toBe(true)
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('restores session storage in a new browser without overwriting refreshed values on navigation', async () => {
+  const adapter = await fixture('immediate')
+  const restored = new NaukriAdapter(() => false, () => undefined)
+  try {
+    await adapter.page!.evaluate(() => sessionStorage.setItem('fixture-session', 'original'))
+    const state = await adapter.state()
+    expect(state.sessionStorage?.['https://www.naukri.com']?.['fixture-session']).toBe('original')
+    await restored.open(state, true)
+    await restored.context!.route('**/*', (route) => route.fulfill({ contentType: 'text/html', body: profile }))
+    await restored.verifySession()
+    expect(await restored.page!.evaluate(() => sessionStorage.getItem('fixture-session'))).toBe('original')
+    await restored.page!.evaluate(() => sessionStorage.setItem('fixture-session', 'refreshed'))
+    await restored.verifySession()
+    expect(await restored.page!.evaluate(() => sessionStorage.getItem('fixture-session'))).toBe('refreshed')
+  } finally {
+    await adapter.close()
+    await restored.close()
+  }
+})
+
+test('ignores an early photo input and waits for a delayed, initially disabled resume uploader', async () => {
+  const adapter = await fixture('immediate')
+  const directory = await mkdtemp(join(tmpdir(), 'autopilot-delayed-'))
+  try {
+    await adapter.context!.route('**/mnjuser/profile', (route) => route.fulfill({
+      contentType: 'text/html',
+      body: `<h2>Resume headline</h2><input id="fileUpload" type="file" accept="image/*" onchange="localStorage.setItem('photoChanged','yes')"><div id="app"></div><script>setTimeout(()=>{document.querySelector('#app').innerHTML='<input id="attachCV" type="file" disabled style="display:none"><p id="filename"></p><p id="feedback"></p>';document.querySelector('#filename').textContent=localStorage.getItem('resume')||'';document.querySelector('#attachCV').onchange=e=>{if(e.target.disabled){localStorage.setItem('uploadedWhileDisabled','yes');return}localStorage.setItem('resume',e.target.files[0].name);document.querySelector('#feedback').textContent='Resume uploaded successfully'};setTimeout(()=>document.querySelector('#attachCV').disabled=false,500)},500)</script>`,
+    }))
+    const path = join(directory, 'resume.pdf')
+    await writeFile(path, '%PDF fixture')
+    expect((await adapter.uploadResume(path)).status).toBe('succeeded')
+    expect(await adapter.page!.evaluate(() => localStorage.getItem('photoChanged'))).toBeNull()
+    expect(await adapter.page!.evaluate(() => localStorage.getItem('uploadedWhileDisabled'))).toBeNull()
+  } finally {
+    await adapter.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('stops while waiting for the resume control instead of selecting the photo uploader', async () => {
+  let stopped = false
+  const adapter = new NaukriAdapter(() => stopped, () => undefined)
+  await adapter.open(null, true)
+  try {
+    await adapter.page!.setContent('<input id="fileUpload" type="file" accept="image/*">')
+    const waiting = adapter.resumeUploadControl()
+    const timer = setTimeout(() => { stopped = true }, 100)
+    try {
+      await expect(waiting).rejects.toBeInstanceOf(StoppedError)
+    } finally {
+      clearTimeout(timer)
+    }
+  } finally {
+    await adapter.close()
+  }
+})
+
+test('refuses ambiguous resume controls without attaching a file', async () => {
+  const adapter = await fixture('immediate')
+  try {
+    await adapter.page!.setContent('<input id="attachCV" type="file"><input name="resume" type="file">')
+    await expect(adapter.resumeUploadControl()).rejects.toThrow('More than one resume upload control')
+    expect(await adapter.page!.locator('input').evaluateAll(inputs => inputs.every(input => (input as HTMLInputElement).files?.length === 0))).toBe(true)
   } finally {
     await adapter.close()
   }

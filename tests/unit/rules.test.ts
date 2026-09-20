@@ -152,6 +152,13 @@ describe('screening answers', () => {
   })
 })
 describe('settings validation', () => {
+  it('requires at least one schedule when autopilot is enabled', () => {
+    expect(settingsSchema.safeParse({
+      ...defaultSettings, active: true,
+      profileSchedule: { ...defaultSettings.profileSchedule, enabled: false },
+      applicationSchedule: { ...defaultSettings.applicationSchedule, enabled: false },
+    }).success).toBe(false)
+  })
   it('requires roles before automatic applications and two headlines for rotation', () => {
     expect(settingsSchema.safeParse({ ...defaultSettings, active: true }).success).toBe(false)
     expect(

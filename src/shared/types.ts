@@ -1,4 +1,5 @@
-export type Workflow = 'profile' | 'applications' | 'preview' | 'connect'
+export type Workflow = 'profile' | 'applications' | 'preview' | 'connect' | 'verify'
+export type ConnectionStatus = 'disconnected' | 'saved' | 'connected' | 'expired' | 'blocked' | 'attention'
 export type RunStatus = 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped' | 'attention'
 export type JobStatus =
   'matched' | 'rejected' | 'attention' | 'submitting' | 'applied' | 'unknown' | 'closed'
@@ -120,6 +121,8 @@ export interface Snapshot {
   settings: Settings
   resume: ResumeInfo | null
   connected: boolean
+  connectionStatus: ConnectionStatus
+  hasSavedSession: boolean
   connectionMessage: string
   runs: Run[]
   jobs: Job[]
