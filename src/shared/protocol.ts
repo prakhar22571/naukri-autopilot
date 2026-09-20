@@ -1,7 +1,9 @@
-import type { Job, ResumeInfo, Run, Settings, StepResult, Workflow } from './types'
+import type { ConnectionStatus, Job, ResumeInfo, Run, Settings, StepResult, Workflow } from './types'
 import type { BrowserContext } from 'playwright-core'
 
-export type AuthState = Awaited<ReturnType<BrowserContext['storageState']>>
+export type AuthState = Awaited<ReturnType<BrowserContext['storageState']>> & {
+  sessionStorage?: Record<string, Record<string, string>>
+}
 export interface WorkerInput {
   type: 'start'
   runId: string
@@ -30,7 +32,7 @@ export type WorkerMessage =
   | { type: 'ready' }
   | { type: 'rpc'; id: number; request: WorkerRequest }
   | { type: 'progress'; message: string }
-  | { type: 'connection'; connected: boolean; message: string }
+  | { type: 'connection'; connected: boolean; message: string; status?: ConnectionStatus }
   | {
       type: 'done'
       status: Run['status']

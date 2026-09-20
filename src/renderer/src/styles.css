@@ -843,6 +843,9 @@ tr:last-child td {
   border-color: #dceede;
 }
 .badge-attention,
+.badge-blocked,
+.badge-expired,
+.badge-saved,
 .badge-unknown,
 .badge-partial {
   color: #aa874b;

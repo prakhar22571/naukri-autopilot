@@ -62,6 +62,9 @@ const statusLabel = (status: string) =>
     not_submitted: 'Not submitted',
     submitting: 'Submitting',
     matched: 'Matched',
+    saved: 'Session saved · not yet checked',
+    blocked: 'Access blocked',
+    expired: 'Login expired',
     rejected: 'Not a match',
   })[status] ?? status.replace(/^./, (c) => c.toUpperCase())
 const workflowLabel = (workflow: Workflow) =>
@@ -70,6 +73,7 @@ const workflowLabel = (workflow: Workflow) =>
     applications: 'Job applications',
     preview: 'Match preview',
     connect: 'Account connection',
+    verify: 'Connection check',
   })[workflow]
 
 function Badge({ status }: { status: string }) {
@@ -191,7 +195,7 @@ export default function App() {
   const [error, setError] = useState(''),
     [toast, setToast] = useState(''),
     [busy, setBusy] = useState(false)
-  const [selectedRun, setSelectedRun] = useState<Run | null>(null),
+  const [selectedRunRecord, setSelectedRun] = useState<Run | null>(null),
     [image, setImage] = useState<string | null>(null)
   const [jobFilter, setJobFilter] = useState('all'),
     [query, setQuery] = useState('')
@@ -199,22 +203,27 @@ export default function App() {
   const [answerJob, setAnswerJob] = useState<Job | null>(null),
     [answerValue, setAnswerValue] = useState('')
   const lastSettings = useRef<Settings | null>(null)
+  const reloadSequence = useRef(0)
   const reload = useCallback(async () => {
+    const sequence = ++reloadSequence.current
     const current = await window.autopilot.snapshot(),
       previousSettings = lastSettings.current
+    if (sequence !== reloadSequence.current) return
     lastSettings.current = current.settings
     setSnapshot(current)
     setDraft((previous) =>
       !previous || JSON.stringify(previous) === JSON.stringify(previousSettings)
         ? structuredClone(current.settings)
-        : previous,
+        : { ...previous, active: current.settings.active, backgroundBrowser: previous.backgroundBrowser === previousSettings?.backgroundBrowser ? current.settings.backgroundBrowser : previous.backgroundBrowser },
     )
   }, [])
   useEffect(() => {
     void reload().catch((e) => setError(errorText(e)))
-    return window.autopilot.onChange(() => {
+    const unsubscribe = window.autopilot.onChange(() => {
       void reload().catch((e) => setError(errorText(e)))
     })
+    const timer = setInterval(() => void reload().catch((e) => setError(errorText(e))), 15_000)
+    return () => { unsubscribe(); clearInterval(timer) }
   }, [reload])
   useEffect(() => {
     if (!toast) return
@@ -253,6 +262,7 @@ export default function App() {
       </div>
     )
   const settings = snapshot.settings
+  const selectedRun = snapshot.runs.find((run) => run.id === selectedRunRecord?.id) ?? selectedRunRecord
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
   const active = !!snapshot.activeRunId
   const attention = snapshot.jobs.filter((j) => ['attention', 'unknown'].includes(j.status))
@@ -265,17 +275,17 @@ export default function App() {
     }, 'Settings saved on this computer.')
   const start = (workflow: Workflow) =>
     act(async () => {
-      if (dirty && workflow !== 'connect')
+      if (dirty && !['connect', 'verify'].includes(workflow))
         throw new Error('Save or discard your settings changes before starting a run.')
       await window.autopilot.start(workflow)
     })
   const toggleActive = () =>
     act(async () => {
-      if (dirty) throw new Error('Save your settings changes before changing autopilot mode.')
+      if (dirty && !settings.active) throw new Error('Save your settings changes before starting autopilot.')
       const changed = { ...settings, active: !settings.active }
       await window.autopilot.saveSettings(changed)
-      setDraft(changed)
-    })
+      setDraft((previous) => ({ ...(previous ?? changed), active: changed.active }))
+    }, settings.active ? 'Autopilot paused. Any running task is stopping.' : 'Autopilot scheduled. It will run at the times shown below. Use a manual action to run now.')
   const showRun = (run: Run) => {
     setSelectedRun(run)
     setImage(null)
@@ -480,6 +490,7 @@ export default function App() {
               variant={settings.active ? 'secondary' : 'primary'}
               onClick={toggleActive}
               disabled={busy}
+              title={settings.active ? 'Pause scheduled runs and stop the current task' : 'Enable future scheduled runs; use the manual actions to run now'}
             >
               {settings.active ? <Pause size={16} /> : <Play size={16} />}
               {settings.active ? 'Pause autopilot' : 'Start autopilot'}
@@ -508,6 +519,28 @@ export default function App() {
                 <Square size={13} />
                 Stop run
               </Button>
+            </div>
+          )}
+          {!active && ['blocked', 'expired', 'attention'].includes(snapshot.connectionStatus) && (
+            <div className="notice error" role="alert">
+              <CircleHelp size={19} />
+              <span>{snapshot.connectionMessage}</span>
+              <Button onClick={() => start(snapshot.connectionStatus === 'expired' ? 'connect' : 'verify')} disabled={busy}>
+                {snapshot.connectionStatus === 'expired' ? 'Reconnect account' : 'Check connection'}
+              </Button>
+            </div>
+          )}
+          {!active && snapshot.runs[0] && (
+            <div className={`notice ${['succeeded', 'stopped'].includes(snapshot.runs[0].status) ? 'success' : 'unsaved'}`} role="status">
+              <History size={19} />
+              <span>{workflowLabel(snapshot.runs[0].workflow)}: {snapshot.runs[0].message}</span>
+              <Button onClick={() => showRun(snapshot.runs[0])}>View run details</Button>
+            </div>
+          )}
+          {settings.active && !active && (
+            <div className="notice running" role="status">
+              <CalendarClock size={19} />
+              <span>Waiting for the next schedule ({settings.timezone}). Profile: {when(snapshot.nextProfile, settings.timezone)}. Applications: {when(snapshot.nextApplications, settings.timezone)}. Manual actions run immediately.</span>
             </div>
           )}
           {dirty && (
@@ -982,17 +1015,22 @@ export default function App() {
                   <div className="connection-logo">n</div>
                   <h2>Your Naukri account</h2>
                   <p className="body-copy">{snapshot.connectionMessage}</p>
-                  <Badge status={snapshot.connected ? 'connected' : 'disconnected'} />
+                  <Badge status={snapshot.connectionStatus} />
                   <div className="stack-actions">
+                    {snapshot.hasSavedSession && (
+                      <Button onClick={() => start('verify')} disabled={busy || active}>
+                        <ShieldCheck size={15} /> Check connection
+                      </Button>
+                    )}
                     <Button
                       variant="primary"
                       onClick={() => start('connect')}
                       disabled={busy || active}
                     >
                       <Link2 size={15} />
-                      {snapshot.connected ? 'Reconnect account' : 'Connect account'}
+                      {snapshot.hasSavedSession ? 'Reconnect account' : 'Connect account'}
                     </Button>
-                    {snapshot.connected && (
+                    {snapshot.hasSavedSession && (
                       <Button
                         onClick={() => act(() => window.autopilot.disconnect())}
                         disabled={busy || active}
@@ -1330,7 +1368,7 @@ export default function App() {
                   />
                   <Toggle
                     label="Run the browser in the background"
-                    hint="Login and account challenges still use a visible Chrome window."
+                    hint="Visible Chrome is recommended. If Naukri blocks background access, autopilot pauses and turns this off."
                     checked={draft.backgroundBrowser}
                     onChange={(value) => update({ backgroundBrowser: value })}
                   />

@@ -55,6 +55,8 @@ export const settingsSchema = z
       .max(500),
   })
   .superRefine((s, ctx) => {
+    if (s.active && !s.profileSchedule.enabled && !s.applicationSchedule.enabled)
+      ctx.addIssue({ code: 'custom', path: ['active'], message: 'Enable at least one schedule before starting autopilot' })
     if (s.active && s.applicationSchedule.enabled && s.filters.titles.length === 0)
       ctx.addIssue({
         code: 'custom',
@@ -72,7 +74,7 @@ export const settingsSchema = z
 export const defaultSettings: Settings = {
   active: false,
   launchAtLogin: false,
-  backgroundBrowser: true,
+  backgroundBrowser: false,
   timezone: 'Asia/Kolkata',
   dailyLimit: 10,
   screenshotRetentionDays: 30,
