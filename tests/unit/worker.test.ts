@@ -76,7 +76,7 @@ it.each([
 ])('reports the distinct connection failure: %s', async (error, status) => {
   adapter.verifySession.mockRejectedValue(error)
   expect(await run('preview')).toMatchObject({ status: 'attention' })
-  expect(messages).toContainEqual(expect.objectContaining({ type: 'connection', connected: false, status }))
+  expect(messages).toContainEqual(expect.objectContaining({ type: 'connection', status }))
   expect(adapter.discover).not.toHaveBeenCalled()
   expect(adapter.state).not.toHaveBeenCalled()
   expect(adapter.close).toHaveBeenCalled()

@@ -13,36 +13,28 @@ import type { Job, Run, StepResult } from '../shared/types'
 
 let stopped = false,
   sequence = 0
-const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>()
+const pending = new Map<number, (reply: { result?: any; error?: string }) => void>()
 const send = (message: WorkerMessage) => process.parentPort.postMessage(message)
 const rpc = <T>(request: WorkerRequest): Promise<T> =>
   new Promise((resolve, reject) => {
     const id = ++sequence
-    const timeout = setTimeout(() => {
+    const timeout = setTimeout(
+      () => pending.get(id)?.({ error: 'Local storage did not acknowledge the operation.' }),
+      15_000,
+    )
+    pending.set(id, (reply) => {
+      clearTimeout(timeout)
       pending.delete(id)
-      reject(new Error('Local storage did not acknowledge the operation.'))
-    }, 15_000)
-    pending.set(id, {
-      resolve: (value) => {
-        clearTimeout(timeout)
-        resolve(value)
-      },
-      reject: (error) => {
-        clearTimeout(timeout)
-        reject(error)
-      },
+      if (reply.error) reject(new Error(reply.error))
+      else resolve(reply.result)
     })
     send({ type: 'rpc', id, request })
   })
 process.parentPort.on('message', (event) => {
   const message = event.data
   if (message.type === 'stop') stopped = true
-  else if (message.type === 'reply') {
-    const waiter = pending.get(message.id)
-    pending.delete(message.id)
-    if (message.error) waiter?.reject(new Error(message.error))
-    else waiter?.resolve(message.result)
-  } else if (message.type === 'start') void run(message)
+  else if (message.type === 'reply') pending.get(message.id)?.(message)
+  else if (message.type === 'start') void run(message)
 })
 send({ type: 'ready' })
 
@@ -70,14 +62,14 @@ async function run(input: WorkerInput): Promise<void> {
       authenticated = true
       send({
         type: 'connection',
-        connected: true,
+        status: 'connected',
         message: 'Connected to Naukri. Your encrypted session is saved on this computer.',
       })
       message = 'Connected to Naukri.'
     } else {
       await adapter.verifySession(input.workflow === 'verify')
       authenticated = true
-      send({ type: 'connection', connected: true, message: 'Naukri session verified.' })
+      send({ type: 'connection', status: 'connected', message: 'Naukri session verified.' })
       if (input.workflow === 'verify') {
         message = 'Connection verified in visible Chrome. No profile changes or applications were made.'
       } else if (input.workflow === 'profile') {
@@ -242,22 +234,14 @@ async function run(input: WorkerInput): Promise<void> {
     if (error instanceof StoppedError) {
       status = 'stopped'
       message = error.message
-    } else if (error instanceof ChallengeError) {
-      status = 'attention'
-      message = error.message
-      send({ type: 'connection', connected: false, status: 'blocked', message })
-    } else if (error instanceof AttentionError) {
-      status = 'attention'
-      message = error.message
-      send({ type: 'connection', connected: false, status: 'expired', message })
-    } else if (error instanceof StructureError) {
+    } else if (error instanceof AttentionError || error instanceof StructureError) {
       status = 'attention'
       message = error.message
       send({
         type: 'connection',
-        connected: false,
-        status: 'attention',
-        message: error.message,
+        status:
+          error instanceof ChallengeError ? 'blocked' : error instanceof AttentionError ? 'expired' : 'attention',
+        message,
       })
     } else {
       status = 'failed'

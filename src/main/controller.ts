@@ -5,18 +5,17 @@ import { join } from 'node:path'
 import { Store } from './database'
 import { SessionVault } from './session'
 import { dueOccurrence, nextOccurrence } from '../core/scheduling'
-import type { ConnectionStatus, Snapshot, Workflow } from '../shared/types'
+import type { ConnectionStatus, Run, Snapshot, Workflow } from '../shared/types'
 import type { WorkerInput, WorkerMessage, WorkerRequest } from '../shared/protocol'
 
 export class Controller {
   private child: UtilityProcess | null = null
   private activeRunId: string | null = null
   private progress = ''
-  private timer: NodeJS.Timeout | null = null
-  private stopTimer: NodeJS.Timeout | null = null
-  private startupTimer: NodeJS.Timeout | null = null
+  private timer?: NodeJS.Timeout
+  private stopTimer?: NodeJS.Timeout
+  private startupTimer?: NodeJS.Timeout
   private stopping = false
-  private connected = false
   private connectionStatus: ConnectionStatus = 'disconnected'
   private connectionMessage = 'Connect your Naukri account to get started.'
   readonly vault: SessionVault
@@ -25,27 +24,21 @@ export class Controller {
     private readonly notify: () => void,
   ) {
     this.vault = new SessionVault(store.directory)
-    this.connectionMessage = this.vault.exists()
-      ? 'Saved session available. It will be verified on the next run.'
-      : this.connectionMessage
-    this.connected = this.vault.exists()
-    this.connectionStatus = this.connected ? 'saved' : 'disconnected'
-    let previous = store.get<{ status: ConnectionStatus; message: string }>('connection')
-    // Upgrade the old error format without treating an access denial as a lost login.
-    const latest = store.runs()[0]
-    if (!previous && this.connected && latest?.status === 'attention' &&
-      latest.message === 'Naukri needs your attention. Reconnect in the visible browser to resolve the challenge.') {
-      previous = { status: 'blocked', message: 'Naukri blocked the previous browser run. Your saved login is retained. Use Check connection in visible Chrome before resuming autopilot.' }
-      store.set('connection', previous)
-      store.set('settings', { ...store.settings(), active: false, backgroundBrowser: false })
-    }
-    if (this.connected && previous && ['expired', 'blocked', 'attention'].includes(previous.status)) {
-      this.connectionStatus = previous.status
-      this.connectionMessage = previous.message
-      this.connected = false
+    if (this.vault.exists()) {
+      const previous = store.get<{ status: ConnectionStatus; message: string }>('connection')
+      if (previous && ['expired', 'blocked', 'attention'].includes(previous.status)) {
+        this.connectionStatus = previous.status
+        this.connectionMessage = previous.message
+      } else {
+        this.connectionStatus = 'saved'
+        this.connectionMessage = 'Saved session available. It will be verified on the next run.'
+      }
     }
     store.recover()
     store.cleanupArtifacts(store.settings().screenshotRetentionDays)
+  }
+  private get connected(): boolean {
+    return this.connectionStatus === 'connected' || this.connectionStatus === 'saved'
   }
   startScheduler(): void {
     this.timer = setInterval(() => {
@@ -152,33 +145,19 @@ export class Controller {
         serviceName: 'Naukri browser worker',
       })
     } catch {
-      this.complete({
-        type: 'done',
-        status: 'failed',
-        message: 'Browser worker could not start.',
-        steps: [],
-        inspected: 0,
-        submitted: 0,
-        screenshotPath: null,
-        evidenceNote: 'No browser was available.',
-      })
+      this.fail('Browser worker could not start.', 'No browser was available.')
       return
     }
     this.child = child
     this.startupTimer = setTimeout(() => {
       if (this.child !== child) return
       child.kill()
-      if (this.activeRunId) this.complete({
-        type: 'done', status: 'failed', message: 'The browser worker did not become ready. Try again.',
-        steps: [], inspected: 0, submitted: 0, screenshotPath: null, evidenceNote: 'Browser worker startup timed out.',
-      })
+      if (this.activeRunId)
+        this.fail('The browser worker did not become ready. Try again.', 'Browser worker startup timed out.')
     }, 30_000)
     child.on('message', (message: WorkerMessage) => {
       if (this.child !== child) return
-      if (this.startupTimer) {
-        clearTimeout(this.startupTimer)
-        this.startupTimer = null
-      }
+      clearTimeout(this.startupTimer)
       try {
         if (message.type === 'rpc') {
           try {
@@ -198,7 +177,7 @@ export class Controller {
           this.progress = message.message
           this.notify()
         } else if (message.type === 'connection') {
-          this.setConnection(message.status ?? (message.connected ? 'connected' : 'expired'), message.message)
+          this.setConnection(message.status, message.message)
         } else if (message.type === 'done') this.complete(message)
       } catch {
         // A session write failure must not be reported as a successful connection.
@@ -208,17 +187,13 @@ export class Controller {
     })
     child.on('exit', () => {
       if (this.child !== child || !this.activeRunId) return
-      this.complete({
-        type: 'done',
-        status: this.stopping ? 'stopped' : 'failed',
-        message:
-          this.stopping ? 'Stopped by you. Pending submissions will be checked before retrying.' : 'Browser worker exited unexpectedly. Pending submissions will be reconciled next time.',
-        steps: [],
-        inspected: 0,
-        submitted: 0,
-        screenshotPath: null,
-        evidenceNote: 'Browser exited before evidence could be saved.',
-      })
+      this.fail(
+        this.stopping
+          ? 'Stopped by you. Pending submissions will be checked before retrying.'
+          : 'Browser worker exited unexpectedly. Pending submissions will be reconciled next time.',
+        'Browser exited before evidence could be saved.',
+        this.stopping ? 'stopped' : 'failed',
+      )
     })
     const input: WorkerInput = {
       type: 'start',
@@ -238,13 +213,12 @@ export class Controller {
     try {
       child.postMessage(input)
     } catch {
-      this.complete({ type: 'done', status: 'failed', message: 'Could not send the task to the browser worker. Try again.', steps: [], inspected: 0, submitted: 0, screenshotPath: null, evidenceNote: 'Browser worker communication failed.' })
+      this.fail('Could not send the task to the browser worker. Try again.', 'Browser worker communication failed.')
       child.kill()
     }
   }
   private setConnection(status: ConnectionStatus, message: string): void {
     this.connectionStatus = status
-    this.connected = status === 'connected' || status === 'saved'
     const settings = this.store.settings()
     if (status === 'blocked' && settings.backgroundBrowser)
       message += ' Background browsing has been turned off for the next run.'
@@ -291,14 +265,9 @@ export class Controller {
   private complete(result: Extract<WorkerMessage, { type: 'done' }>): void {
     const run = this.activeRunId ? this.store.run(this.activeRunId) : null
     if (!run) return
-    if (this.startupTimer) {
-      clearTimeout(this.startupTimer)
-      this.startupTimer = null
-    }
-    if (this.stopTimer) {
-      clearTimeout(this.stopTimer)
-      this.stopTimer = null
-    }
+    clearTimeout(this.startupTimer)
+    clearTimeout(this.stopTimer)
+    this.stopTimer = undefined
     let screenshotId: string | null = null
     let evidenceNote = result.evidenceNote
     if (result.screenshotPath) {
@@ -330,6 +299,18 @@ export class Controller {
       new Notification({ title: 'Naukri Autopilot', body: result.message }).show()
     this.notify()
   }
+  private fail(message: string, evidenceNote: string, status: Run['status'] = 'failed'): void {
+    this.complete({
+      type: 'done',
+      status,
+      message,
+      steps: [],
+      inspected: 0,
+      submitted: 0,
+      screenshotPath: null,
+      evidenceNote,
+    })
+  }
   stop(): void {
     this.stopping = true
     this.child?.postMessage({ type: 'stop' })
@@ -345,7 +326,7 @@ export class Controller {
     this.setConnection('disconnected', 'Disconnected. Saved login session removed.')
   }
   shutdown(): void {
-    if (this.timer) clearInterval(this.timer)
+    clearInterval(this.timer)
     this.stop()
   }
 }

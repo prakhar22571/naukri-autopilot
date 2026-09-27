@@ -97,8 +97,6 @@ function showWindow(): void {
 function trustedUrl(value: string): boolean {
   try {
     const url = new URL(value)
-    if (url.origin === 'null' && url.protocol === 'app:' && url.hostname === 'autopilot')
-      return true
     if (url.protocol === 'app:' && url.hostname === 'autopilot') return true
     return (
       !app.isPackaged &&
@@ -242,8 +240,7 @@ function registerIPC(): void {
   })
   handle('screenshot', (raw: unknown) => {
     const artifact = store.artifact(z.string().uuid().parse(raw))
-    const root = resolve(dataDirectory, 'screenshots') + sep
-    if (!artifact || !resolve(artifact.path).startsWith(root) || !existsSync(artifact.path))
+    if (!artifact || !store.inScreenshots(artifact.path) || !existsSync(artifact.path))
       throw new Error('This screenshot is no longer available.')
     return `data:image/png;base64,${readFileSync(artifact.path).toString('base64')}`
   })

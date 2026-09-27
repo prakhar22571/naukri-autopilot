@@ -113,9 +113,15 @@ export class NaukriAdapter {
       .isVisible()
       .catch(() => false)
   }
+  private passwordVisible(): Promise<boolean> {
+    return this.visible(this.page!.locator('input[type="password"]'))
+  }
+  private profileVisible(): Promise<boolean> {
+    return this.visible(this.page!.getByText('Resume headline', { exact: true }))
+  }
   async assertReady(): Promise<void> {
     if (!this.page || this.page.isClosed()) throw new Error('The browser window was closed.')
-    if (await this.visible(this.page.locator('input[type="password"]')))
+    if (await this.passwordVisible())
       throw new AttentionError('Your Naukri session expired. Reconnect to continue.')
     const body = await this.page.locator('body').innerText({ timeout: 10_000 })
     if (
@@ -132,15 +138,14 @@ export class NaukriAdapter {
   }
   async isSignedIn(): Promise<boolean> {
     if (!this.page || this.page.isClosed()) return false
-    if (await this.visible(this.page.locator('input[type="password"]'))) return false
+    if (await this.passwordVisible()) return false
     return (
       (await this.visible(
         this.page.locator(
           'a[href*="/mnjuser/profile"], .nI-gNb-drawer__icon, .nI-gNb-drawer__bars',
         ),
       )) ||
-      (this.page.url().includes('/mnjuser/profile') &&
-        (await this.visible(this.page.getByText('Resume headline', { exact: true }))))
+      (this.page.url().includes('/mnjuser/profile') && (await this.profileVisible()))
     )
   }
   async login(hasSavedSession = false): Promise<AuthState> {
@@ -182,12 +187,11 @@ export class NaukriAdapter {
         continue
       }
       // A navigation link or hamburger alone does not prove the profile loaded.
-      if (this.page!.url().includes('/mnjuser/profile') &&
-        await this.visible(this.page!.getByText('Resume headline', { exact: true }))) break
+      if (this.page!.url().includes('/mnjuser/profile') && (await this.profileVisible())) break
       await this.page!.waitForTimeout(250)
     }
     await this.assertReady()
-    if (!(await this.visible(this.page!.getByText('Resume headline', { exact: true }))))
+    if (!(await this.profileVisible()))
       throw new StructureError('The profile did not finish loading or its layout changed. Your saved login is retained. Check the connection before trying again.')
     this.protectNavigation = true
   }
@@ -740,12 +744,7 @@ export class NaukriAdapter {
     }
   }
   async screenshot(path: string): Promise<string | null> {
-    if (
-      !this.page ||
-      this.page.isClosed() ||
-      (await this.visible(this.page.locator('input[type="password"]')))
-    )
-      return null
+    if (!this.page || this.page.isClosed() || (await this.passwordVisible())) return null
     await this.page.screenshot({ path, fullPage: false, timeout: 5000 })
     return path
   }

@@ -45,18 +45,10 @@ export function parsePostingDate(text: string, now = new Date()): string | null 
   return null
 }
 export function jobIdFromUrl(value: string): string | null {
-  try {
-    const url = new URL(value)
-    if (
-      url.protocol !== 'https:' ||
-      !(url.hostname === 'naukri.com' || url.hostname.endsWith('.naukri.com'))
-    )
-      return null
-    if (!url.pathname.includes('job-listings-')) return null
-    return url.pathname.match(/-(\d{8,})(?:\/)?$/)?.[1] ?? null
-  } catch {
-    return null
-  }
+  if (!isNaukriUrl(value)) return null
+  const { pathname } = new URL(value)
+  if (!pathname.includes('job-listings-')) return null
+  return pathname.match(/-(\d{8,})(?:\/)?$/)?.[1] ?? null
 }
 export function isNaukriUrl(value: string): boolean {
   try {

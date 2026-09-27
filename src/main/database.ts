@@ -17,7 +17,6 @@ import type {
 export class Store {
   readonly db: Database.Database
   constructor(readonly directory: string) {
-    mkdirSync(directory, { recursive: true })
     mkdirSync(join(directory, 'screenshots'), { recursive: true })
     mkdirSync(join(directory, 'resumes'), { recursive: true })
     this.db = new Database(join(directory, 'autopilot.db'))
@@ -49,6 +48,12 @@ export class Store {
         this.set(`schedule:${workflow}`, new Date().toISOString())
     }
   }
+  private data<T>(sql: string, ...args: unknown[]): T[] {
+    return (this.db.prepare(sql).all(...args) as { data: string }[]).map((r) => JSON.parse(r.data))
+  }
+  inScreenshots(path: string): boolean {
+    return resolve(path).startsWith(resolve(this.directory, 'screenshots') + sep)
+  }
   get<T>(key: string): T | null {
     const row = this.db.prepare('SELECT value FROM metadata WHERE key = ?').get(key) as
       { value: string } | undefined
@@ -68,16 +73,10 @@ export class Store {
     return this.get('resume')
   }
   runs(): Run[] {
-    return (
-      this.db.prepare('SELECT data FROM runs ORDER BY started_at DESC LIMIT 1000').all() as {
-        data: string
-      }[]
-    ).map((r) => JSON.parse(r.data))
+    return this.data('SELECT data FROM runs ORDER BY started_at DESC LIMIT 1000')
   }
   run(id: string): Run | null {
-    const row = this.db.prepare('SELECT data FROM runs WHERE id=?').get(id) as
-      { data: string } | undefined
-    return row ? JSON.parse(row.data) : null
+    return this.data<Run>('SELECT data FROM runs WHERE id=?', id)[0] ?? null
   }
   saveRun(run: Run): void {
     this.db
@@ -105,16 +104,10 @@ export class Store {
     return run
   }
   jobs(): Job[] {
-    return (
-      this.db.prepare('SELECT data FROM jobs ORDER BY discovered_at DESC LIMIT 5000').all() as {
-        data: string
-      }[]
-    ).map((r) => JSON.parse(r.data))
+    return this.data('SELECT data FROM jobs ORDER BY discovered_at DESC LIMIT 5000')
   }
   job(id: string): Job | null {
-    const row = this.db.prepare('SELECT data FROM jobs WHERE id=?').get(id) as
-      { data: string } | undefined
-    return row ? JSON.parse(row.data) : null
+    return this.data<Job>('SELECT data FROM jobs WHERE id=?', id)[0] ?? null
   }
   saveJob(job: Job): void {
     const old = this.job(job.id)
@@ -212,9 +205,7 @@ export class Store {
     return row ?? null
   }
   addArtifact(runId: string, path: string): string {
-    const root = resolve(this.directory, 'screenshots') + sep
-    if (!resolve(path).startsWith(root) || !existsSync(path))
-      throw new Error('Invalid screenshot path')
+    if (!this.inScreenshots(path) || !existsSync(path)) throw new Error('Invalid screenshot path')
     const id = randomUUID()
     this.db
       .prepare('INSERT INTO artifacts VALUES (?,?,?,?)')
@@ -226,9 +217,8 @@ export class Store {
     const rows = this.db
       .prepare('SELECT id,path,run_id AS runId FROM artifacts WHERE created_at < ?')
       .all(cutoff) as { id: string; path: string; runId: string }[]
-    const root = resolve(this.directory, 'screenshots') + sep
     for (const row of rows) {
-      if (!resolve(row.path).startsWith(root)) continue
+      if (!this.inScreenshots(row.path)) continue
       try {
         if (existsSync(row.path)) unlinkSync(row.path)
       } catch {

@@ -32,7 +32,7 @@ export type WorkerMessage =
   | { type: 'ready' }
   | { type: 'rpc'; id: number; request: WorkerRequest }
   | { type: 'progress'; message: string }
-  | { type: 'connection'; connected: boolean; message: string; status?: ConnectionStatus }
+  | { type: 'connection'; status: ConnectionStatus; message: string }
   | {
       type: 'done'
       status: Run['status']

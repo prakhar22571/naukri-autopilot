@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { DateTime } from 'luxon'
 import {
-  ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
   Bell,
@@ -48,6 +47,7 @@ const split = (value: string) =>
     .split(/[,\n]/)
     .map((v) => v.trim())
     .filter(Boolean)
+const num = (value: string) => (value === '' ? null : Number(value))
 const errorText = (error: unknown) =>
   (error instanceof Error ? error.message : 'Something went wrong. Please try again.').replace(
     /^Error invoking remote method '[^']+': (?:Error: )?/,
@@ -267,6 +267,8 @@ export default function App() {
   const active = !!snapshot.activeRunId
   const attention = snapshot.jobs.filter((j) => ['attention', 'unknown'].includes(j.status))
   const update = (patch: Partial<Settings>) => setDraft({ ...draft, ...patch })
+  const setFilter = <K extends keyof Settings['filters']>(key: K, value: Settings['filters'][K]) =>
+    update({ filters: { ...draft.filters, [key]: value } })
   const save = () =>
     act(async () => {
       const cleaned = { ...draft, headlines: draft.headlines.map((h) => h.trim()).filter(Boolean) }
@@ -1082,9 +1084,7 @@ export default function App() {
                       <ListInput
                         placeholder="Frontend Developer, React Developer"
                         value={draft.filters.titles}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, titles: value } })
-                        }
+                        onChange={(value) => setFilter('titles', value)}
                       />
                     </Field>
                     <Field
@@ -1094,9 +1094,7 @@ export default function App() {
                       <ListInput
                         placeholder="Bengaluru, Hyderabad"
                         value={draft.filters.locations}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, locations: value } })
-                        }
+                        onChange={(value) => setFilter('locations', value)}
                       />
                     </Field>
                     <Field
@@ -1106,9 +1104,7 @@ export default function App() {
                       <ListInput
                         placeholder="React, TypeScript"
                         value={draft.filters.requiredSkills}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, requiredSkills: value } })
-                        }
+                        onChange={(value) => setFilter('requiredSkills', value)}
                       />
                     </Field>
                     <Field
@@ -1118,9 +1114,7 @@ export default function App() {
                       <ListInput
                         placeholder="Next.js, PostgreSQL"
                         value={draft.filters.preferredSkills}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, preferredSkills: value } })
-                        }
+                        onChange={(value) => setFilter('preferredSkills', value)}
                       />
                     </Field>
                     <Field label="Your experience (years)">
@@ -1131,15 +1125,7 @@ export default function App() {
                         step="0.5"
                         placeholder="Any"
                         value={draft.filters.experienceYears ?? ''}
-                        onChange={(e) =>
-                          update({
-                            filters: {
-                              ...draft.filters,
-                              experienceYears:
-                                e.target.value === '' ? null : Number(e.target.value),
-                            },
-                          })
-                        }
+                        onChange={(e) => setFilter('experienceYears', num(e.target.value))}
                       />
                     </Field>
                     <Field
@@ -1152,15 +1138,7 @@ export default function App() {
                         step="0.5"
                         placeholder="No minimum"
                         value={draft.filters.minimumSalaryLpa ?? ''}
-                        onChange={(e) =>
-                          update({
-                            filters: {
-                              ...draft.filters,
-                              minimumSalaryLpa:
-                                e.target.value === '' ? null : Number(e.target.value),
-                            },
-                          })
-                        }
+                        onChange={(e) => setFilter('minimumSalaryLpa', num(e.target.value))}
                       />
                     </Field>
                     <Field label="Maximum posting age (days)">
@@ -1169,11 +1147,7 @@ export default function App() {
                         min="1"
                         max="365"
                         value={draft.filters.maximumAgeDays}
-                        onChange={(e) =>
-                          update({
-                            filters: { ...draft.filters, maximumAgeDays: Number(e.target.value) },
-                          })
-                        }
+                        onChange={(e) => setFilter('maximumAgeDays', Number(e.target.value))}
                       />
                     </Field>
                     <Field label="Work mode" hint="Leave all unchecked to accept any work mode.">
@@ -1184,14 +1158,12 @@ export default function App() {
                               type="checkbox"
                               checked={draft.filters.workModes.includes(mode)}
                               onChange={(e) =>
-                                update({
-                                  filters: {
-                                    ...draft.filters,
-                                    workModes: e.target.checked
-                                      ? [...draft.filters.workModes, mode]
-                                      : draft.filters.workModes.filter((m) => m !== mode),
-                                  },
-                                })
+                                setFilter(
+                                  'workModes',
+                                  e.target.checked
+                                    ? [...draft.filters.workModes, mode]
+                                    : draft.filters.workModes.filter((m) => m !== mode),
+                                )
                               }
                             />
                             {mode}
@@ -1203,18 +1175,14 @@ export default function App() {
                       <ListInput
                         placeholder="Companies to skip"
                         value={draft.filters.excludedCompanies}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, excludedCompanies: value } })
-                        }
+                        onChange={(value) => setFilter('excludedCompanies', value)}
                       />
                     </Field>
                     <Field label="Excluded keywords">
                       <ListInput
                         placeholder="Internship, unpaid"
                         value={draft.filters.excludedKeywords}
-                        onChange={(value) =>
-                          update({ filters: { ...draft.filters, excludedKeywords: value } })
-                        }
+                        onChange={(value) => setFilter('excludedKeywords', value)}
                       />
                     </Field>
                   </div>
@@ -1304,7 +1272,7 @@ export default function App() {
                             update({
                               candidate: {
                                 ...draft.candidate,
-                                [field.key]: e.target.value === '' ? null : Number(e.target.value),
+                                [field.key]: num(e.target.value),
                               },
                             })
                           }

@@ -99,7 +99,7 @@ describe('worker supervision and scheduling', () => {
   it('pauses scheduling when the browser requires attention', async () => {
     store.set('settings', { ...store.settings(), active: true })
     await controller.start('profile')
-    workers[0].emit('message', { type: 'connection', connected: false, message: 'Session expired' })
+    workers[0].emit('message', { type: 'connection', status: 'expired', message: 'Session expired' })
     expect(store.settings().active).toBe(false)
     expect(controller.snapshot().connected).toBe(false)
   })
@@ -115,7 +115,7 @@ describe('worker supervision and scheduling', () => {
   it('retains saved sessions when access is blocked and remembers the problem after restart', async () => {
     store.set('settings', { ...store.settings(), active: true, backgroundBrowser: true })
     await controller.start('preview')
-    workers[0].emit('message', { type: 'connection', connected: false, status: 'blocked', message: 'Access denied' })
+    workers[0].emit('message', { type: 'connection', status: 'blocked', message: 'Access denied' })
     expect(controller.snapshot()).toMatchObject({ connected: false, connectionStatus: 'blocked', hasSavedSession: true })
     expect(store.settings()).toMatchObject({ active: false, backgroundBrowser: false })
     workers[0].emit('message', done)
@@ -124,7 +124,7 @@ describe('worker supervision and scheduling', () => {
     expect(controller.snapshot().connectionStatus).toBe('blocked')
     await controller.start('verify')
     expect(workers[1].messages[0]).toMatchObject({ workflow: 'verify', auth: { cookies: [], origins: [] } })
-    workers[1].emit('message', { type: 'connection', connected: true, message: 'Verified' })
+    workers[1].emit('message', { type: 'connection', status: 'connected', message: 'Verified' })
     expect(controller.snapshot().connectionStatus).toBe('connected')
     expect(store.settings().active).toBe(false)
   })
